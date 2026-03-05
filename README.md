@@ -24,10 +24,10 @@
       <a href="https://openaichat.top/">GPT 服务站</a>
     </td>
     <td valign="top">
-      OpenClaw 中 ChatGPT 模型随心用：
-      国内免翻访问，支持 OpenAI 最新所有模型。<br />
+      OpenClaw 中随心用顶级 ChatGPT 模型：
+      国内免翻访问，支持 OpenAI 最新所有模型。（可理解为高质量低价格的 Token 包月服务）<br />
       地址：<a href="https://openaichat.top/">https://openaichat.top/</a><br />
-      附赠作者1对1 OpenClaw 咨询服务
+      附赠作者1对1 OpenClaw 咨询服务、OpenClaw 安装指导等。
     </td>
   </tr>
 </table>
@@ -110,8 +110,6 @@
 - `qqbot` 在 `msg_id` 失效场景下回退使用 `event_id`，提升定时与异步回发稳定性。
 - 优化定时任务稳定性：提醒类任务统一采用 sessionTarget="isolated" + 固定 delivery.channel/to/accountId，避免投递串会话。
 - 强化 Cron 创建提示词：明确要求将执行期约束写入 payload.message（仅纯文本、禁止调用工具、禁止手动发送）。
-
-
 
 
 ### 2026-03-03
