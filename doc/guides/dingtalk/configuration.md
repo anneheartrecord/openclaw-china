@@ -74,6 +74,8 @@
 ![Permission Apply](../../images/dingtalk_permission_apply.png)
 
 > 如果未开启权限或不启用 AI Card，也不影响正常对话；系统会回退到普通消息，并在日志中给出权限申请指引链接。
+>
+> 如果要启用流式输出，DingTalk 插件还需要能够访问 OpenClaw Gateway 的认证 token。将 OpenClaw 全局配置中的 `gateway.auth.token`；放入 `channels.dingtalk.gatewayToken` 中。
 
 ---
 
@@ -105,6 +107,7 @@ openclaw config set channels.dingtalk '{
   "enabled": true,
   "clientId": "dingxxxxxx",
   "clientSecret": "your-app-secret",
+  "gatewayToken": "your-openclaw-gateway-token",
   "longTaskNoticeDelayMs": 30000,
   "enableAICard": true,
   "maxFileSizeMB": 100,
@@ -122,6 +125,7 @@ openclaw config set channels.dingtalk '{
 | defaultAccount | string | `"default"` / 首个账号 | 默认账户 ID |
 | clientId | string | - | 钉钉应用 AppKey |
 | clientSecret | string | - | 钉钉应用 AppSecret |
+| gatewayToken | string | 继承 `gateway.auth.token` | OpenClaw Gateway Bearer Token。仅在启用流式输出时需要 |
 | dmPolicy | string | "open" | 单聊策略: open/pairing/allowlist |
 | groupPolicy | string | "open" | 群聊策略: open/allowlist/disabled |
 | longTaskNoticeDelayMs | number | 30000 | 非流式普通消息模式下，首条正式回复超过该时长仍未发送时，自动补发“任务处理时间较长，请稍等，我还在继续处理。”；设为 `0` 可关闭 |
@@ -129,6 +133,11 @@ openclaw config set channels.dingtalk '{
 | maxFileSizeMB | number | 100 | 媒体文件大小限制 (MB) |
 | inboundMedia.dir | string | `~/.openclaw/media/dingtalk/inbound` | 入站媒体归档根目录 |
 | inboundMedia.keepDays | number | 7 | 入站媒体保留天数（按过期清理） |
+
+流式输出认证说明：
+- 当 `enableAICard = true`，插件会通过 OpenClaw Gateway 的 `/v1/chat/completions` 获取流式结果。
+- 此时需要可用的 Gateway 凭证。推荐直接配置 `channels.dingtalk.gatewayToken`。
+- 如果未单独配置，插件会回退读取 OpenClaw 全局配置 `gateway.auth.token`。但有时会不行
 
 入站媒体保留策略（dingtalk）：
 - 先下载到临时目录，再归档到 `inboundMedia.dir/YYYY-MM-DD/`
@@ -150,6 +159,7 @@ openclaw config set channels.dingtalk '{
           "name": "主机器人",
           "clientId": "ding-main-app-key",
           "clientSecret": "ding-main-app-secret",
+          "gatewayToken": "your-openclaw-gateway-token",
           "enableAICard": true
         },
         "bot2": {

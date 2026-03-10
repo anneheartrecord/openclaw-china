@@ -272,6 +272,14 @@ function getChannelConfig(cfg: ConfigRoot, channelId: ChannelId): ConfigRecord {
   return isRecord(existing) ? existing : {};
 }
 
+function getGatewayAuthToken(cfg: ConfigRoot): string | undefined {
+  if (!isRecord(cfg.gateway)) {
+    return undefined;
+  }
+  const auth = isRecord(cfg.gateway.auth) ? cfg.gateway.auth : undefined;
+  return toTrimmedString(auth?.token);
+}
+
 function getPreferredAccountConfig(channelCfg: ConfigRecord): ConfigRecord | undefined {
   const accounts = channelCfg.accounts;
   if (!isRecord(accounts)) {
@@ -475,12 +483,25 @@ async function configureDingtalk(prompter: SetupPrompter, cfg: ConfigRoot): Prom
     "启用 AI Card 流式回复（推荐关闭，使用非流式）",
     toBoolean(existing.enableAICard, false)
   );
-
-  return mergeChannelConfig(cfg, "dingtalk", {
+  const patch: ConfigRecord = {
     clientId,
     clientSecret,
     enableAICard,
-  });
+  };
+
+  if (enableAICard) {
+    const gatewayToken = await prompter.askSecret({
+      label: "OpenClaw Gateway Token（流式输出必需；留空则使用全局 gateway.auth.token）",
+      existingValue: toTrimmedString(existing.gatewayToken) ?? getGatewayAuthToken(cfg),
+      required: false,
+    });
+
+    if (gatewayToken.trim()) {
+      patch.gatewayToken = gatewayToken;
+    }
+  }
+
+  return mergeChannelConfig(cfg, "dingtalk", patch);
 }
 
 async function configureFeishu(prompter: SetupPrompter, cfg: ConfigRoot): Promise<ConfigRoot> {

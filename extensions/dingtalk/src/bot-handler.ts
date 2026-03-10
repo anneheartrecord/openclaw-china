@@ -328,6 +328,14 @@ function resolveGatewayRequestParams(
   return { gatewayUrl, headers };
 }
 
+function formatStreamingInterruptMessage(err: unknown): string {
+  const baseMessage = `⚠️ Response interrupted: ${String(err)}`;
+  if (String(err).includes("Gateway error")) {
+    return `${baseMessage}\n请手动设置 channels.dingtalk.gatewayToken，或确认 OpenClaw 全局 gateway.auth.token 配置正确。`;
+  }
+  return baseMessage;
+}
+
 async function* streamFromGateway(params: {
   runtime: unknown;
   sessionKey: string;
@@ -723,7 +731,7 @@ async function handleAICardStreaming(params: {
     logger.error(`AI Card streaming failed: ${String(err)}`);
     // 尝试用错误信息完成卡片
     try {
-      const errorMsg = `⚠️ Response interrupted: ${String(err)}`;
+      const errorMsg = formatStreamingInterruptMessage(err);
       await finishAICard(card, errorMsg, (msg) => logger.debug(msg));
     } catch (finishErr) {
       logger.error(`Failed to finish card with error: ${String(finishErr)}`);
@@ -733,7 +741,7 @@ async function handleAICardStreaming(params: {
       try {
         const fallbackText = accumulated.trim()
           ? accumulated
-          : `⚠️ Response interrupted: ${String(err)}`;
+          : formatStreamingInterruptMessage(err);
         const limit = dingtalkCfg.textChunkLimit ?? 4000;
         for (let i = 0; i < fallbackText.length; i += limit) {
           const chunk = fallbackText.slice(i, i + limit);

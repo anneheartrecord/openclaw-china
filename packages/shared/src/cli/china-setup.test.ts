@@ -64,6 +64,7 @@ function createCommandNode(): CommandNode {
 
 async function runSetup(initialConfig: ConfigRoot): Promise<{
   writeConfigFile: ReturnType<typeof vi.fn>;
+  channels?: string[];
 }> {
   let registrar:
     | ((ctx: { program: unknown; config?: unknown; logger?: LoggerLike }) => void | Promise<void>)
@@ -176,5 +177,94 @@ describe("china setup wecom", () => {
 
     expect(writeConfigFile).not.toHaveBeenCalled();
     expect(selectOptions.some((option) => option.label === "WeCom（企业微信-智能机器人）（已配置）")).toBe(true);
+  });
+});
+
+describe("china setup dingtalk", () => {
+  const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete (globalThis as Record<PropertyKey, unknown>)[CLI_STATE_KEY];
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+  });
+
+  afterEach(() => {
+    if (stdinDescriptor) {
+      Object.defineProperty(process.stdin, "isTTY", stdinDescriptor);
+    }
+    if (stdoutDescriptor) {
+      Object.defineProperty(process.stdout, "isTTY", stdoutDescriptor);
+    }
+  });
+
+  it("stores gateway token when dingtalk AI Card streaming is enabled", async () => {
+    let registrar:
+      | ((ctx: { program: unknown; config?: unknown; logger?: LoggerLike }) => void | Promise<void>)
+      | undefined;
+    const writeConfigFile = vi.fn(async (_cfg: ConfigRoot) => {});
+
+    registerChinaSetupCli(
+      {
+        runtime: {
+          config: {
+            writeConfigFile,
+          },
+        },
+        registerCli: (nextRegistrar) => {
+          registrar = nextRegistrar;
+        },
+      },
+      { channels: ["dingtalk"] }
+    );
+
+    selectMock.mockResolvedValueOnce("dingtalk");
+    textMock.mockResolvedValueOnce("ding-app-key");
+    textMock.mockResolvedValueOnce("ding-app-secret");
+    confirmMock.mockResolvedValueOnce(true);
+    textMock.mockResolvedValueOnce("gateway-token-123");
+
+    const program = createCommandNode();
+    await registrar?.({
+      program,
+      config: {
+        gateway: {
+          auth: {
+            token: "global-token",
+          },
+        },
+      },
+      logger: {},
+    });
+
+    const setupCommand = program.children.get("china")?.children.get("setup");
+    expect(setupCommand?.actionHandler).toBeTypeOf("function");
+    await setupCommand?.actionHandler?.();
+
+    expect(writeConfigFile).toHaveBeenCalledTimes(1);
+    const savedConfig = writeConfigFile.mock.calls[0]?.[0] as ConfigRoot;
+    const dingtalkConfig = savedConfig.channels?.dingtalk;
+
+    expect(dingtalkConfig?.enabled).toBe(true);
+    expect(dingtalkConfig?.clientId).toBe("ding-app-key");
+    expect(dingtalkConfig?.clientSecret).toBe("ding-app-secret");
+    expect(dingtalkConfig?.enableAICard).toBe(true);
+    expect(dingtalkConfig?.gatewayToken).toBe("gateway-token-123");
+
+    const promptMessages = textMock.mock.calls.map((call) => {
+      const firstArg = call[0] as { message?: string } | undefined;
+      return firstArg?.message ?? "";
+    });
+    expect(promptMessages).toContain(
+      "OpenClaw Gateway Token（流式输出必需；留空则使用全局 gateway.auth.token）"
+    );
   });
 });
