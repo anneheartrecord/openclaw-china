@@ -10,6 +10,7 @@ import {
   resolveQQBotNoReplyFallback,
   sanitizeQQBotOutboundText,
   sendQQBotMediaWithFallback,
+  splitQQBotMarkdownTransportText,
   startLongTaskNoticeTimer,
 } from "./bot.js";
 
@@ -271,6 +272,30 @@ describe("normalizeQQBotRenderedMarkdown", () => {
   it("keeps non-table fenced code blocks unchanged", () => {
     const text = "```ts\nconsole.log('hello');\n```";
     expect(normalizeQQBotRenderedMarkdown(text)).toBe(text);
+  });
+});
+
+describe("splitQQBotMarkdownTransportText", () => {
+  it("keeps plain markdown as a single segment", () => {
+    expect(splitQQBotMarkdownTransportText("# 标题\n\n> 引用")).toEqual(["# 标题\n\n> 引用"]);
+  });
+
+  it("splits table blocks from surrounding markdown to preserve QQ rendering", () => {
+    const text = "# 标题\n\n> 引用\n\n| col1 | col2 |\n| --- | --- |\n| a | b |\n\n---\n\n- item";
+    expect(splitQQBotMarkdownTransportText(text)).toEqual([
+      "# 标题\n\n> 引用",
+      "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      "---\n\n- item",
+    ]);
+  });
+
+  it("does not split table-like text inside fenced code blocks", () => {
+    const text =
+      "```md\n| col1 | col2 |\n| --- | --- |\n| a | b |\n```\n\n| x | y |\n| --- | --- |\n| 1 | 2 |";
+    expect(splitQQBotMarkdownTransportText(text)).toEqual([
+      "```md\n| col1 | col2 |\n| --- | --- |\n| a | b |\n```",
+      "| x | y |\n| --- | --- |\n| 1 | 2 |",
+    ]);
   });
 });
 

@@ -90,6 +90,35 @@ function logEventIdFallback(params: {
   console.info(detail);
 }
 
+function logQQBotOutboundDispatch(params: {
+  action: "text" | "media";
+  api:
+    | "sendProactiveC2CMessage"
+    | "sendC2CMessage"
+    | "sendProactiveGroupMessage"
+    | "sendGroupMessage"
+    | "sendChannelMessage"
+    | "sendFileQQBot";
+  accountId?: string;
+  targetKind: TargetKind;
+  targetId: string;
+  markdown?: boolean;
+  replyToId?: string;
+  replyEventId?: string;
+  text?: string;
+  mediaUrl?: string;
+}): void {
+  const accountLabel = params.accountId?.trim() || DEFAULT_ACCOUNT_ID;
+  const textLength = typeof params.text === "string" ? params.text.length : 0;
+  const mediaLabel = params.mediaUrl ? ` media=${shortId(params.mediaUrl)}` : "";
+  console.info(
+    `[qqbot] outbound action=${params.action} api=${params.api} accountId=${accountLabel} ` +
+      `target=${params.targetKind}:${shortId(params.targetId)} markdown=${params.markdown ? "yes" : "no"} ` +
+      `replyToId=${params.replyToId ? "yes" : "no"} replyEventId=${params.replyEventId ? "yes" : "no"} ` +
+      `textLen=${textLength}${mediaLabel}`
+  );
+}
+
 function shouldRetryWithEventId(err: unknown): boolean {
   const status = err instanceof HttpError ? err.status : undefined;
   let body = "";
@@ -168,6 +197,15 @@ export const qqbotOutbound = {
     try {
       if (target.kind === "group") {
         if (!replyToId && !replyEventId) {
+          logQQBotOutboundDispatch({
+            action: "text",
+            api: "sendProactiveGroupMessage",
+            accountId,
+            targetKind: target.kind,
+            targetId: target.id,
+            markdown,
+            text,
+          });
           const result = await sendProactiveGroupMessage({
             accessToken,
             groupOpenid: target.id,
@@ -179,6 +217,17 @@ export const qqbotOutbound = {
 
         let result: { id: string; timestamp: number | string };
         try {
+          logQQBotOutboundDispatch({
+            action: "text",
+            api: "sendGroupMessage",
+            accountId,
+            targetKind: target.kind,
+            targetId: target.id,
+            markdown: groupMarkdown,
+            replyToId,
+            replyEventId,
+            text,
+          });
           result = await sendGroupMessage({
             accessToken,
             groupOpenid: target.id,
@@ -234,6 +283,15 @@ export const qqbotOutbound = {
         return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
       }
       if (target.kind === "channel") {
+        logQQBotOutboundDispatch({
+          action: "text",
+          api: "sendChannelMessage",
+          accountId,
+          targetKind: target.kind,
+          targetId: target.id,
+          replyToId,
+          text,
+        });
         const result = await sendChannelMessage({
           accessToken,
           channelId: target.id,
@@ -244,6 +302,15 @@ export const qqbotOutbound = {
       }
 
       if (!replyToId && !replyEventId) {
+        logQQBotOutboundDispatch({
+          action: "text",
+          api: "sendProactiveC2CMessage",
+          accountId,
+          targetKind: target.kind,
+          targetId: target.id,
+          markdown,
+          text,
+        });
         const result = await sendProactiveC2CMessage({
           accessToken,
           openid: target.id,
@@ -255,6 +322,17 @@ export const qqbotOutbound = {
 
       let result: { id: string; timestamp: number | string };
       try {
+        logQQBotOutboundDispatch({
+          action: "text",
+          api: "sendC2CMessage",
+          accountId,
+          targetKind: target.kind,
+          targetId: target.id,
+          markdown,
+          replyToId,
+          replyEventId,
+          text,
+        });
         result = await sendC2CMessage({
           accessToken,
           openid: target.id,
@@ -348,6 +426,17 @@ export const qqbotOutbound = {
     try {
       let result: { id: string; timestamp: number | string };
       try {
+        logQQBotOutboundDispatch({
+          action: "media",
+          api: "sendFileQQBot",
+          accountId,
+          targetKind: target.kind,
+          targetId: target.id,
+          replyToId,
+          replyEventId,
+          text: sendTextAsFollowup ? undefined : trimmedText,
+          mediaUrl,
+        });
         result = await sendFileQQBot({
           cfg: qqCfg,
           target: { kind: target.kind, id: target.id },

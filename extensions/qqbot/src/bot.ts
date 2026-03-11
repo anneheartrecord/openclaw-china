@@ -14,9 +14,12 @@ import {
   type Logger,
   appendCronHiddenPrompt,
   ASRError,
+  detectMediaType,
   extractMediaFromText,
   isImagePath,
+  isLocalReference,
   pruneInboundMediaDir,
+  stripTitleFromUrl,
   transcribeTencentFlash,
 } from "@openclaw-china/shared";
 import {
@@ -31,6 +34,10 @@ import {
   type QQBotAccountConfig,
   type PluginConfig,
 } from "./config.js";
+import {
+  isQQBotHttpImageUrl,
+  normalizeQQBotMarkdownImages,
+} from "./markdown-images.js";
 import { qqbotOutbound } from "./outbound.js";
 import { upsertKnownQQBotTarget, type KnownQQBotTarget } from "./proactive.js";
 import { getQQBotRuntime } from "./runtime.js";
@@ -647,29 +654,69 @@ function extractLocalMediaFromText(params: {
   logger?: Logger;
 }): { text: string; mediaUrls: string[] } {
   const { text, logger } = params;
-  const result = extractMediaFromText(text, {
-    removeFromText: true,
-    checkExists: true,
-    existsSync: (p: string) => {
-      const exists = fs.existsSync(p);
-      if (!exists) {
-        logger?.warn?.(`[media] local file not found: ${p}`);
-      }
-      return exists;
-    },
-    parseMediaLines: false,
-    parseMarkdownImages: true,
-    parseHtmlImages: false,
-    parseBarePaths: true,
-    parseMarkdownLinks: true,
+  const mediaUrls: string[] = [];
+  const seenMedia = new Set<string>();
+  let nextText = text;
+  const MARKDOWN_LINKED_IMAGE_RE = /\[!\[([^\]]*)\]\(([^)]+)\)\]\(([^)]+)\)/g;
+  const MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  const MARKDOWN_LINK_RE = /\[([^\]]*)\]\(([^)]+)\)/g;
+  const BARE_LOCAL_MEDIA_PATH_RE =
+    /`?((?:\/(?:tmp|var|private|Users|home|root)\/[^\s`'",)]+|[A-Za-z]:[\\/][^\s`'",)]+)\.(?:png|jpg|jpeg|gif|bmp|webp|svg|ico|mp3|wav|ogg|m4a|amr|flac|aac|wma|mp4|mov|avi|mkv|webm|flv|wmv|m4v))`?/gi;
+
+  const collectLocalRichMedia = (
+    rawValue: string,
+    allowedTypes?: ReadonlySet<"image" | "audio" | "video">
+  ): string | undefined => {
+    const candidate = stripTitleFromUrl(rawValue.trim());
+    if (!candidate || !isLocalReference(candidate)) {
+      return undefined;
+    }
+    if (!fs.existsSync(candidate)) {
+      logger?.warn?.(`[media] local file not found: ${candidate}`);
+      return undefined;
+    }
+    const mediaType = detectMediaType(candidate);
+    if (mediaType === "file") {
+      return undefined;
+    }
+    if (allowedTypes && !allowedTypes.has(mediaType)) {
+      return undefined;
+    }
+    if (seenMedia.has(candidate)) {
+      return candidate;
+    }
+    seenMedia.add(candidate);
+    mediaUrls.push(candidate);
+    return candidate;
+  };
+
+  nextText = nextText.replace(MARKDOWN_LINKED_IMAGE_RE, (fullMatch, _alt, rawPath) => {
+    return collectLocalRichMedia(rawPath) ? "" : fullMatch;
   });
 
-  const mediaUrls = result.all
-    .filter((m): m is ExtractedMedia & { localPath: string } => m.isLocal && typeof m.localPath === "string")
-    .filter((m) => m.type !== "file")
-    .map((m) => m.localPath);
+  nextText = nextText.replace(MARKDOWN_IMAGE_RE, (fullMatch, _alt, rawPath) => {
+    return collectLocalRichMedia(rawPath) ? "" : fullMatch;
+  });
 
-  return { text: result.text, mediaUrls };
+  nextText = nextText.replace(MARKDOWN_LINK_RE, (fullMatch, _label, rawPath) => {
+    const mediaPath = collectLocalRichMedia(rawPath, new Set(["audio", "video"]));
+    if (!mediaPath) {
+      return fullMatch;
+    }
+    return "";
+  });
+
+  nextText = nextText.replace(BARE_LOCAL_MEDIA_PATH_RE, (fullMatch, rawPath) => {
+    return collectLocalRichMedia(rawPath) ? "" : fullMatch;
+  });
+
+  nextText = nextText.replace(/[ \t]+\n/g, "\n");
+  nextText = nextText.replace(/\n{3,}/g, "\n\n");
+
+  return {
+    text: nextText.trim(),
+    mediaUrls,
+  };
 }
 
 function extractMediaLinesFromText(params: {
@@ -775,6 +822,16 @@ export function sanitizeQQBotOutboundText(rawText: string): string {
   return next;
 }
 
+function formatQQBotOutboundPreview(text: string, maxLength = 240): string {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return '""';
+  }
+  const preview =
+    normalized.length > maxLength ? `${normalized.slice(0, Math.max(0, maxLength - 3))}...` : normalized;
+  return JSON.stringify(preview);
+}
+
 export function shouldSuppressQQBotTextWhenMediaPresent(rawText: string, sanitizedText: string): boolean {
   const raw = rawText.trim();
   if (!raw) return false;
@@ -831,6 +888,34 @@ function isQQBotC2CTarget(to: string): boolean {
   return !raw.startsWith("group:") && !raw.startsWith("channel:");
 }
 
+function splitQQBotMarkdownTransportMediaUrls(mediaUrls: string[]): {
+  markdownImageUrls: string[];
+  mediaQueue: string[];
+} {
+  const markdownImageUrls: string[] = [];
+  const mediaQueue: string[] = [];
+  const seenMarkdownImages = new Set<string>();
+  const seenMedia = new Set<string>();
+
+  for (const rawUrl of mediaUrls) {
+    const next = rawUrl.trim();
+    if (!next) continue;
+
+    if (isQQBotHttpImageUrl(next)) {
+      if (seenMarkdownImages.has(next)) continue;
+      seenMarkdownImages.add(next);
+      markdownImageUrls.push(next);
+      continue;
+    }
+
+    if (seenMedia.has(next)) continue;
+    seenMedia.add(next);
+    mediaQueue.push(next);
+  }
+
+  return { markdownImageUrls, mediaQueue };
+}
+
 export function hasQQBotMarkdownTable(text: string): boolean {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   for (let index = 0; index < lines.length - 1; index += 1) {
@@ -847,6 +932,88 @@ export function hasQQBotMarkdownTable(text: string): boolean {
     }
   }
   return false;
+}
+
+function isQQBotMarkdownFenceToggle(line: string): string | undefined {
+  const match = line.trim().match(/^(`{3,}|~{3,})/);
+  return match?.[1];
+}
+
+function isQQBotMarkdownTableStart(lines: string[], index: number): boolean {
+  const header = lines[index]?.trim() ?? "";
+  const separator = lines[index + 1]?.trim() ?? "";
+  if (!header.includes("|") || !MARKDOWN_TABLE_SEPARATOR_RE.test(separator)) {
+    return false;
+  }
+
+  const headerColumns = header.split("|").filter((column) => column.trim()).length;
+  const separatorColumns = separator.split("|").filter((column) => column.trim()).length;
+  return headerColumns >= 2 && separatorColumns >= 2;
+}
+
+function isQQBotMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length > 0 && trimmed.includes("|");
+}
+
+export function splitQQBotMarkdownTransportText(text: string): string[] {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return [];
+  if (!hasQQBotMarkdownTable(normalized)) return [normalized];
+
+  const lines = normalized.split("\n");
+  const segments: string[] = [];
+  let buffer: string[] = [];
+  let activeFence: string | undefined;
+
+  const flushBuffer = (): void => {
+    const segment = buffer.join("\n").trim();
+    buffer = [];
+    if (!segment) return;
+    segments.push(segment);
+  };
+
+  for (let index = 0; index < lines.length; ) {
+    const line = lines[index] ?? "";
+    const fence = isQQBotMarkdownFenceToggle(line);
+    if (fence) {
+      if (!activeFence) {
+        activeFence = fence[0];
+      } else if (activeFence === fence[0]) {
+        activeFence = undefined;
+      }
+      buffer.push(line);
+      index += 1;
+      continue;
+    }
+
+    if (!activeFence && isQQBotMarkdownTableStart(lines, index)) {
+      flushBuffer();
+
+      const tableLines = [lines[index] ?? "", lines[index + 1] ?? ""];
+      index += 2;
+      while (index < lines.length && isQQBotMarkdownTableRow(lines[index] ?? "")) {
+        tableLines.push(lines[index] ?? "");
+        index += 1;
+      }
+
+      const tableSegment = tableLines.join("\n").trim();
+      if (tableSegment) {
+        segments.push(tableSegment);
+      }
+
+      while (index < lines.length && !(lines[index] ?? "").trim()) {
+        index += 1;
+      }
+      continue;
+    }
+
+    buffer.push(line);
+    index += 1;
+  }
+
+  flushBuffer();
+  return segments.length > 0 ? segments : [normalized];
 }
 
 export function resolveQQBotTextReplyRefs(params: {
@@ -1264,33 +1431,102 @@ async function dispatchToAgent(params: {
     const replyFinalOnly = qqCfg.replyFinalOnly ?? false;
     const markdownSupport = qqCfg.markdownSupport ?? true;
     const c2cMarkdownDeliveryMode = qqCfg.c2cMarkdownDeliveryMode ?? "proactive-table-only";
-    let bufferingProactiveMarkdownReply = false;
-    let bufferedProactiveMarkdownTexts: string[] = [];
+    const useC2CMarkdownTransport = markdownSupport && isQQBotC2CTarget(target.to);
+    let bufferedC2CMarkdownTexts: string[] = [];
+    let bufferedC2CMarkdownMediaUrls: string[] = [];
+    const bufferedC2CMarkdownMediaSeen = new Set<string>();
 
-    const flushBufferedProactiveMarkdownReply = async (): Promise<void> => {
-      if (!bufferingProactiveMarkdownReply || bufferedProactiveMarkdownTexts.length === 0) {
-        bufferingProactiveMarkdownReply = false;
-        bufferedProactiveMarkdownTexts = [];
+    const bufferC2CMarkdownMedia = (url?: string): void => {
+      const next = url?.trim();
+      if (!next || bufferedC2CMarkdownMediaSeen.has(next)) return;
+      bufferedC2CMarkdownMediaSeen.add(next);
+      bufferedC2CMarkdownMediaUrls.push(next);
+    };
+
+    const flushBufferedC2CMarkdownReply = async (): Promise<void> => {
+      if (
+        !useC2CMarkdownTransport ||
+        (bufferedC2CMarkdownTexts.length === 0 && bufferedC2CMarkdownMediaUrls.length === 0)
+      ) {
+        bufferedC2CMarkdownTexts = [];
+        bufferedC2CMarkdownMediaUrls = [];
+        bufferedC2CMarkdownMediaSeen.clear();
         return;
       }
 
-      const combinedText = bufferedProactiveMarkdownTexts.join("\n\n").trim();
-      bufferingProactiveMarkdownReply = false;
-      bufferedProactiveMarkdownTexts = [];
-      if (!combinedText) return;
-      const normalizedCombinedText = normalizeQQBotRenderedMarkdown(combinedText);
+      const combinedText = bufferedC2CMarkdownTexts.join("\n\n").trim();
+      const combinedMediaUrls = [...bufferedC2CMarkdownMediaUrls];
+      bufferedC2CMarkdownTexts = [];
+      bufferedC2CMarkdownMediaUrls = [];
+      bufferedC2CMarkdownMediaSeen.clear();
 
-      const result = await qqbotOutbound.sendText({
-        cfg: { channels: { qqbot: qqCfg } },
-        to: target.to,
+      const normalizedCombinedText = normalizeQQBotRenderedMarkdown(combinedText);
+      const { markdownImageUrls, mediaQueue } = splitQQBotMarkdownTransportMediaUrls(combinedMediaUrls);
+      const finalMarkdownText = await normalizeQQBotMarkdownImages({
         text: normalizedCombinedText,
+        appendImageUrls: markdownImageUrls,
       });
-      if (result.error) {
-        logger.error(`send buffered proactive markdown reply failed: ${result.error}`);
-        markGroupMessageInterfaceBlocked(result.error);
-      } else {
-        logger.info(`sent buffered proactive QQ markdown reply (len=${normalizedCombinedText.length})`);
-        markReplyDelivered();
+      const textReplyRefs = resolveQQBotTextReplyRefs({
+        to: target.to,
+        text: finalMarkdownText || normalizedCombinedText,
+        markdownSupport,
+        c2cMarkdownDeliveryMode,
+        replyToId: inbound.messageId,
+        replyEventId: inbound.eventId,
+      });
+      const textSegments = finalMarkdownText ? splitQQBotMarkdownTransportText(finalMarkdownText) : [];
+      const deliveryLabel = textReplyRefs.forceProactive
+        ? "c2c-markdown-proactive"
+        : "c2c-markdown-passive";
+      logger.info(
+        `delivery=${deliveryLabel} to=${target.to} segments=${textSegments.length} media=${mediaQueue.length} ` +
+          `replyToId=${textReplyRefs.replyToId ? "yes" : "no"} replyEventId=${textReplyRefs.replyEventId ? "yes" : "no"} ` +
+          `tableMode=${String(resolvedTableMode)} chunkMode=${String(chunkMode ?? "default")}`
+      );
+
+      await sendQQBotMediaWithFallback({
+        qqCfg,
+        to: target.to,
+        mediaQueue,
+        replyToId: textReplyRefs.replyToId,
+        replyEventId: textReplyRefs.replyEventId,
+        logger,
+        onDelivered: () => {
+          markReplyDelivered();
+        },
+        onError: (error) => {
+          markGroupMessageInterfaceBlocked(error);
+        },
+      });
+
+      if (!finalMarkdownText) {
+        return;
+      }
+
+      for (let segmentIndex = 0; segmentIndex < textSegments.length; segmentIndex += 1) {
+        const segment = textSegments[segmentIndex] ?? "";
+        const chunks = chunkText(segment);
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+          const chunk = chunks[chunkIndex] ?? "";
+          logger.info(
+            `delivery=${deliveryLabel} segment=${segmentIndex + 1}/${textSegments.length} ` +
+              `chunk=${chunkIndex + 1}/${chunks.length} preview=${formatQQBotOutboundPreview(chunk)}`
+          );
+          const result = await qqbotOutbound.sendText({
+            cfg: { channels: { qqbot: qqCfg } },
+            to: target.to,
+            text: chunk,
+            replyToId: textReplyRefs.replyToId,
+            replyEventId: textReplyRefs.replyEventId,
+          });
+          if (result.error) {
+            logger.error(`send buffered QQ markdown reply failed: ${result.error}`);
+            markGroupMessageInterfaceBlocked(result.error);
+          } else {
+            logger.info(`sent buffered QQ markdown reply (len=${chunk.length})`);
+            markReplyDelivered();
+          }
+        }
       }
     };
 
@@ -1336,6 +1572,17 @@ async function dispatchToAgent(params: {
       const suppressText = deliveryDecision.suppressText || suppressEchoText;
       const textToSend = suppressText ? "" : cleanedText;
 
+      if (useC2CMarkdownTransport) {
+        if (textToSend) {
+          bufferedC2CMarkdownTexts = appendQQBotBufferedText(bufferedC2CMarkdownTexts, textToSend);
+        }
+
+        for (const url of mediaQueue) {
+          bufferC2CMarkdownMedia(url);
+        }
+        return;
+      }
+
       if (textToSend) {
         const converted = textApi?.convertMarkdownTables
           ? textApi.convertMarkdownTables(textToSend, resolvedTableMode)
@@ -1348,30 +1595,20 @@ async function dispatchToAgent(params: {
           replyToId: inbound.messageId,
           replyEventId: inbound.eventId,
         });
-        const shouldBufferProactiveMarkdownReply =
-          bufferingProactiveMarkdownReply || textReplyRefs.forceProactive;
-        if (shouldBufferProactiveMarkdownReply) {
-          if (!bufferingProactiveMarkdownReply) {
-            logger.info("C2C markdown reply detected; buffering final proactive QQ message to preserve markdown rendering");
-          }
-          bufferingProactiveMarkdownReply = true;
-          bufferedProactiveMarkdownTexts = appendQQBotBufferedText(bufferedProactiveMarkdownTexts, converted);
-        } else {
-          const chunks = chunkText(converted);
-          for (const chunk of chunks) {
-            const result = await qqbotOutbound.sendText({
-              cfg: { channels: { qqbot: qqCfg } },
-              to: target.to,
-              text: chunk,
-              replyToId: textReplyRefs.replyToId,
-              replyEventId: textReplyRefs.replyEventId,
-            });
-            if (result.error) {
-              logger.error(`sendText failed: ${result.error}`);
-              markGroupMessageInterfaceBlocked(result.error);
-            } else {
-              markReplyDelivered();
-            }
+        const chunks = chunkText(converted);
+        for (const chunk of chunks) {
+          const result = await qqbotOutbound.sendText({
+            cfg: { channels: { qqbot: qqCfg } },
+            to: target.to,
+            text: chunk,
+            replyToId: textReplyRefs.replyToId,
+            replyEventId: textReplyRefs.replyEventId,
+          });
+          if (result.error) {
+            logger.error(`sendText failed: ${result.error}`);
+            markGroupMessageInterfaceBlocked(result.error);
+          } else {
+            markReplyDelivered();
           }
         }
       }
@@ -1411,7 +1648,7 @@ async function dispatchToAgent(params: {
           },
         },
       });
-      await flushBufferedProactiveMarkdownReply();
+      await flushBufferedC2CMarkdownReply();
     } else {
       const dispatcherResult = replyApi.createReplyDispatcherWithTyping
         ? replyApi.createReplyDispatcherWithTyping({
@@ -1446,7 +1683,7 @@ async function dispatchToAgent(params: {
       });
 
       dispatcherResult.markDispatchIdle?.();
-      await flushBufferedProactiveMarkdownReply();
+      await flushBufferedC2CMarkdownReply();
     }
 
     const noReplyFallback = resolveQQBotNoReplyFallback({

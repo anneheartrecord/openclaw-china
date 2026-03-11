@@ -85,6 +85,7 @@ describe("qqbotOutbound event_id fallback", () => {
   });
 
   it("uses proactive c2c sends when no passive reply context exists", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     mocks.sendProactiveC2CMessage.mockResolvedValueOnce({ id: "c2c-proactive-1", timestamp: 12 });
 
     const result = await qqbotOutbound.sendText({
@@ -101,6 +102,36 @@ describe("qqbotOutbound event_id fallback", () => {
       markdown: true,
     });
     expect(mocks.sendC2CMessage).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining("outbound action=text api=sendProactiveC2CMessage")
+    );
+    infoSpy.mockRestore();
+  });
+
+  it("uses passive c2c sends when reply context exists", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    mocks.sendC2CMessage.mockResolvedValueOnce({ id: "c2c-passive-1", timestamp: 13 });
+
+    const result = await qqbotOutbound.sendText({
+      cfg: baseCfg,
+      to: "user:u-passive-1",
+      text: "# title",
+      replyToId: "msg-passive-1",
+      replyEventId: "evt-passive-1",
+    });
+
+    expect(result).toEqual({ channel: "qqbot", messageId: "c2c-passive-1", timestamp: 13 });
+    expect(mocks.sendC2CMessage).toHaveBeenCalledWith({
+      accessToken: "token-1",
+      openid: "u-passive-1",
+      content: "# title",
+      messageId: "msg-passive-1",
+      markdown: true,
+    });
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining("outbound action=text api=sendC2CMessage")
+    );
+    infoSpy.mockRestore();
   });
 
   it("retries group text with event_id when msg_id is expired", async () => {
