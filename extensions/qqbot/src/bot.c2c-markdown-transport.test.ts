@@ -132,7 +132,7 @@ describe("QQBot C2C markdown transport", () => {
     vi.unstubAllGlobals();
   });
 
-  it("splits c2c table replies from appended http image markdown", async () => {
+  it("keeps c2c table replies and appended http image markdown in one proactive send", async () => {
     installReplyRuntime([
       {
         text: "| col1 | col2 |\n| --- | --- |\n| a | b |\n\nhttps://example.com/table.png",
@@ -165,37 +165,22 @@ describe("QQBot C2C markdown transport", () => {
     });
 
     expect(outboundMocks.sendMedia).not.toHaveBeenCalled();
-    expect(outboundMocks.sendText).toHaveBeenCalledTimes(2);
-    expect(outboundMocks.sendText.mock.calls.map((call) => call[0])).toEqual([
-      {
-        cfg: {
-          channels: {
-            qqbot: {
-              ...baseCfg.channels.qqbot,
-              c2cMarkdownDeliveryMode: "proactive-table-only",
-            },
+    expect(outboundMocks.sendText).toHaveBeenCalledTimes(1);
+    expect(outboundMocks.sendText).toHaveBeenCalledWith({
+      cfg: {
+        channels: {
+          qqbot: {
+            ...baseCfg.channels.qqbot,
+            c2cMarkdownDeliveryMode: "proactive-table-only",
           },
         },
-        to: "user:u-table-1",
-        text: "| col1 | col2 |\n| --- | --- |\n| a | b |",
-        replyToId: undefined,
-        replyEventId: undefined,
       },
-      {
-        cfg: {
-          channels: {
-            qqbot: {
-              ...baseCfg.channels.qqbot,
-              c2cMarkdownDeliveryMode: "proactive-table-only",
-            },
-          },
-        },
-        to: "user:u-table-1",
-        text: "![#640px #480px](https://example.com/table.png)",
-        replyToId: undefined,
-        replyEventId: undefined,
-      },
-    ]);
+      to: "user:u-table-1",
+      text:
+        "| col1 | col2 |\n| --- | --- |\n| a | b |\n\n![#640px #480px](https://example.com/table.png)",
+      replyToId: undefined,
+      replyEventId: undefined,
+    });
     expect(
       logger.info.mock.calls.some(([message]) =>
         String(message).includes("delivery=c2c-markdown-proactive")
@@ -203,12 +188,12 @@ describe("QQBot C2C markdown transport", () => {
     ).toBe(true);
     expect(
       logger.info.mock.calls.some(([message]) =>
-        String(message).includes('delivery=c2c-markdown-proactive segment=1/2 chunk=1/1 preview=')
+        String(message).includes('delivery=c2c-markdown-proactive segment=1/1 chunk=1/1 preview=')
       )
     ).toBe(true);
   });
 
-  it("splits mixed c2c table markdown into multiple proactive sends", async () => {
+  it("keeps mixed c2c table markdown in a single proactive send", async () => {
     installReplyRuntime([
       {
         text:
@@ -241,51 +226,21 @@ describe("QQBot C2C markdown transport", () => {
       logger,
     });
 
-    expect(outboundMocks.sendText).toHaveBeenCalledTimes(3);
-    expect(outboundMocks.sendText.mock.calls.map((call) => call[0])).toEqual([
-      {
-        cfg: {
-          channels: {
-            qqbot: {
-              ...baseCfg.channels.qqbot,
-              c2cMarkdownDeliveryMode: "proactive-all",
-            },
+    expect(outboundMocks.sendText).toHaveBeenCalledTimes(1);
+    expect(outboundMocks.sendText).toHaveBeenCalledWith({
+      cfg: {
+        channels: {
+          qqbot: {
+            ...baseCfg.channels.qqbot,
+            c2cMarkdownDeliveryMode: "proactive-all",
           },
         },
-        to: "user:u-mixed-1",
-        text: "# 标题\n\n> 引用",
-        replyToId: undefined,
-        replyEventId: undefined,
       },
-      {
-        cfg: {
-          channels: {
-            qqbot: {
-              ...baseCfg.channels.qqbot,
-              c2cMarkdownDeliveryMode: "proactive-all",
-            },
-          },
-        },
-        to: "user:u-mixed-1",
-        text: "| col1 | col2 |\n| --- | --- |\n| a | b |",
-        replyToId: undefined,
-        replyEventId: undefined,
-      },
-      {
-        cfg: {
-          channels: {
-            qqbot: {
-              ...baseCfg.channels.qqbot,
-              c2cMarkdownDeliveryMode: "proactive-all",
-            },
-          },
-        },
-        to: "user:u-mixed-1",
-        text: "---\n\n- item",
-        replyToId: undefined,
-        replyEventId: undefined,
-      },
-    ]);
+      to: "user:u-mixed-1",
+      text: "# 标题\n\n> 引用\n\n| col1 | col2 |\n| --- | --- |\n| a | b |\n\n---\n\n- item",
+      replyToId: undefined,
+      replyEventId: undefined,
+    });
   });
 
   it("keeps raw markdown for c2c transport even when framework table conversion is enabled", async () => {
@@ -336,8 +291,7 @@ describe("QQBot C2C markdown transport", () => {
 
     expect(convertMarkdownTables).not.toHaveBeenCalled();
     expect(outboundMocks.sendText.mock.calls.map((call) => call[0].text)).toEqual([
-      "# 标题\n\n> 引用第一行\n\n- 列表 A\n\n---",
-      "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      "# 标题\n\n> 引用第一行\n\n- 列表 A\n\n---\n\n| col1 | col2 |\n| --- | --- |\n| a | b |",
     ]);
   });
 

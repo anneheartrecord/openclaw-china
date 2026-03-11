@@ -934,88 +934,6 @@ export function hasQQBotMarkdownTable(text: string): boolean {
   return false;
 }
 
-function isQQBotMarkdownFenceToggle(line: string): string | undefined {
-  const match = line.trim().match(/^(`{3,}|~{3,})/);
-  return match?.[1];
-}
-
-function isQQBotMarkdownTableStart(lines: string[], index: number): boolean {
-  const header = lines[index]?.trim() ?? "";
-  const separator = lines[index + 1]?.trim() ?? "";
-  if (!header.includes("|") || !MARKDOWN_TABLE_SEPARATOR_RE.test(separator)) {
-    return false;
-  }
-
-  const headerColumns = header.split("|").filter((column) => column.trim()).length;
-  const separatorColumns = separator.split("|").filter((column) => column.trim()).length;
-  return headerColumns >= 2 && separatorColumns >= 2;
-}
-
-function isQQBotMarkdownTableRow(line: string): boolean {
-  const trimmed = line.trim();
-  return trimmed.length > 0 && trimmed.includes("|");
-}
-
-export function splitQQBotMarkdownTransportText(text: string): string[] {
-  const normalized = text.replace(/\r\n/g, "\n").trim();
-  if (!normalized) return [];
-  if (!hasQQBotMarkdownTable(normalized)) return [normalized];
-
-  const lines = normalized.split("\n");
-  const segments: string[] = [];
-  let buffer: string[] = [];
-  let activeFence: string | undefined;
-
-  const flushBuffer = (): void => {
-    const segment = buffer.join("\n").trim();
-    buffer = [];
-    if (!segment) return;
-    segments.push(segment);
-  };
-
-  for (let index = 0; index < lines.length; ) {
-    const line = lines[index] ?? "";
-    const fence = isQQBotMarkdownFenceToggle(line);
-    if (fence) {
-      if (!activeFence) {
-        activeFence = fence[0];
-      } else if (activeFence === fence[0]) {
-        activeFence = undefined;
-      }
-      buffer.push(line);
-      index += 1;
-      continue;
-    }
-
-    if (!activeFence && isQQBotMarkdownTableStart(lines, index)) {
-      flushBuffer();
-
-      const tableLines = [lines[index] ?? "", lines[index + 1] ?? ""];
-      index += 2;
-      while (index < lines.length && isQQBotMarkdownTableRow(lines[index] ?? "")) {
-        tableLines.push(lines[index] ?? "");
-        index += 1;
-      }
-
-      const tableSegment = tableLines.join("\n").trim();
-      if (tableSegment) {
-        segments.push(tableSegment);
-      }
-
-      while (index < lines.length && !(lines[index] ?? "").trim()) {
-        index += 1;
-      }
-      continue;
-    }
-
-    buffer.push(line);
-    index += 1;
-  }
-
-  flushBuffer();
-  return segments.length > 0 ? segments : [normalized];
-}
-
 export function resolveQQBotTextReplyRefs(params: {
   to: string;
   text: string;
@@ -1474,7 +1392,7 @@ async function dispatchToAgent(params: {
         replyToId: inbound.messageId,
         replyEventId: inbound.eventId,
       });
-      const textSegments = finalMarkdownText ? splitQQBotMarkdownTransportText(finalMarkdownText) : [];
+      const textSegments = finalMarkdownText ? [finalMarkdownText] : [];
       const deliveryLabel = textReplyRefs.forceProactive
         ? "c2c-markdown-proactive"
         : "c2c-markdown-passive";
