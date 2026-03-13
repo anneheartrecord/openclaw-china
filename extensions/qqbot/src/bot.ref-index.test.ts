@@ -148,7 +148,6 @@ describe("QQBot ref-index quote context", () => {
       expect.objectContaining({
         content: "现在这条消息",
         senderId: "u-ref-1",
-        senderName: "Alice",
         timestamp: 1700000001000,
       })
     );

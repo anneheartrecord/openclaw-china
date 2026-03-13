@@ -75,32 +75,12 @@ type QQBotAgentRoute = {
   effectiveSessionKey?: string;
 };
 
-type QQBotDisplayFieldKind = "remark_name" | "card" | "nickname" | "username";
-
-type QQBotDisplayFieldMatch = {
-  kind: QQBotDisplayFieldKind;
-  path: string;
-  value: string;
-};
-
-type QQBotSenderDisplayProfile = {
-  inspectedPaths: string[];
-  matchedFields: QQBotDisplayFieldMatch[];
-  fields: Partial<Record<QQBotDisplayFieldKind, string>>;
-};
-
-type ParsedQQInboundMessage = QQInboundMessage & {
-  senderDisplayProfile?: QQBotSenderDisplayProfile;
-};
-
 type QQBotSenderNameResolution = {
   displayName: string;
   persistentDisplayName?: string;
-  source: "account-alias" | "global-alias" | QQBotDisplayFieldKind | "history" | "stable-id";
+  source: "known-target" | "account-alias" | "global-alias" | "stable-id";
   matchedAliasKey?: string;
-  historyDisplayName?: string;
-  inspectedPaths: string[];
-  matchedFields: QQBotDisplayFieldMatch[];
+  knownTargetDisplayName?: string;
 };
 
 const sessionDispatchQueue = new Map<string, Promise<void>>();
@@ -195,68 +175,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
-const QQBOT_DISPLAY_SOURCE_PATHS = [
-  "author",
-  "author.user",
-  "author.member",
-  "payload.user",
-  "payload.member",
-  "payload.sender",
-] as const;
-
-const QQBOT_DISPLAY_FIELD_RULES: ReadonlyArray<{
-  kind: QQBotDisplayFieldKind;
-  keys: readonly string[];
-}> = [
-  { kind: "remark_name", keys: ["remark_name", "remarkName"] },
-  { kind: "card", keys: ["card"] },
-  { kind: "nickname", keys: ["nickname", "nick_name"] },
-  { kind: "username", keys: ["username", "user_name", "display_name", "displayName", "name"] },
-] as const;
-
-function buildQQBotSenderDisplayProfile(payload: Record<string, unknown>): QQBotSenderDisplayProfile {
-  const author = asRecord(payload.author);
-  const sources = [
-    { path: "author", value: author },
-    { path: "author.user", value: asRecord(author?.user) },
-    { path: "author.member", value: asRecord(author?.member) },
-    { path: "payload.user", value: asRecord(payload.user) },
-    { path: "payload.member", value: asRecord(payload.member) },
-    { path: "payload.sender", value: asRecord(payload.sender) },
-  ];
-  const profile: QQBotSenderDisplayProfile = {
-    inspectedPaths: [...QQBOT_DISPLAY_SOURCE_PATHS],
-    matchedFields: [],
-    fields: {},
-  };
-
-  for (const source of sources) {
-    if (!source.value) {
-      continue;
-    }
-    for (const rule of QQBOT_DISPLAY_FIELD_RULES) {
-      if (profile.fields[rule.kind]) {
-        continue;
-      }
-      for (const key of rule.keys) {
-        const value = toString(source.value[key]);
-        if (!value) {
-          continue;
-        }
-        profile.fields[rule.kind] = value;
-        profile.matchedFields.push({
-          kind: rule.kind,
-          path: `${source.path}.${key}`,
-          value,
-        });
-        break;
-      }
-    }
-  }
-
-  return profile;
-}
-
 function normalizeQQBotDisplayAliasesMap(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== "object") {
     return {};
@@ -288,33 +206,27 @@ function resolveQQBotDisplayAliasMaps(
   };
 }
 
-function pickQQBotDisplayFieldCandidate(
-  profile?: QQBotSenderDisplayProfile
-): { source: QQBotDisplayFieldKind; value: string } | undefined {
-  if (!profile) {
-    return undefined;
-  }
-
-  for (const rule of QQBOT_DISPLAY_FIELD_RULES) {
-    const value = profile.fields[rule.kind];
-    if (value) {
-      return { source: rule.kind, value };
-    }
-  }
-  return undefined;
-}
-
 function resolveQQBotSenderName(params: {
-  inbound: ParsedQQInboundMessage;
+  inbound: QQInboundMessage;
   cfg?: PluginConfig;
   accountId: string;
 }): QQBotSenderNameResolution {
   const { inbound, cfg, accountId } = params;
-  const profile = inbound.senderDisplayProfile;
   const stableId = inbound.c2cOpenid?.trim() || inbound.senderId.trim();
   const { globalAliases, accountAliases } = resolveQQBotDisplayAliasMaps(cfg, accountId);
 
   if (inbound.type === "direct") {
+    const knownTarget = stableId ? getKnownQQBotTarget({ accountId, target: `user:${stableId}` }) : undefined;
+    const knownTargetDisplayName = knownTarget?.displayName?.trim();
+    if (knownTargetDisplayName) {
+      return {
+        displayName: knownTargetDisplayName,
+        persistentDisplayName: knownTargetDisplayName,
+        source: "known-target",
+        knownTargetDisplayName,
+      };
+    }
+
     const aliasKeys = [...new Set([`user:${stableId}`, stableId, inbound.senderId.trim()].filter(Boolean))];
     for (const aliasKey of aliasKeys) {
       const alias = accountAliases[aliasKey];
@@ -324,8 +236,6 @@ function resolveQQBotSenderName(params: {
           persistentDisplayName: alias,
           source: "account-alias",
           matchedAliasKey: aliasKey,
-          inspectedPaths: profile?.inspectedPaths ?? [...QQBOT_DISPLAY_SOURCE_PATHS],
-          matchedFields: profile?.matchedFields ?? [],
         };
       }
     }
@@ -337,64 +247,27 @@ function resolveQQBotSenderName(params: {
           persistentDisplayName: alias,
           source: "global-alias",
           matchedAliasKey: aliasKey,
-          inspectedPaths: profile?.inspectedPaths ?? [...QQBOT_DISPLAY_SOURCE_PATHS],
-          matchedFields: profile?.matchedFields ?? [],
         };
       }
-    }
-  }
-
-  const fieldCandidate = pickQQBotDisplayFieldCandidate(profile);
-  if (fieldCandidate) {
-    return {
-      displayName: fieldCandidate.value,
-      persistentDisplayName: fieldCandidate.value,
-      source: fieldCandidate.source,
-      inspectedPaths: profile?.inspectedPaths ?? [...QQBOT_DISPLAY_SOURCE_PATHS],
-      matchedFields: profile?.matchedFields ?? [],
-    };
-  }
-
-  if (inbound.type === "direct") {
-    const historyTarget = stableId ? getKnownQQBotTarget({ accountId, target: `user:${stableId}` }) : undefined;
-    const historyDisplayName = historyTarget?.displayName?.trim();
-    if (historyDisplayName) {
-      return {
-        displayName: historyDisplayName,
-        persistentDisplayName: historyDisplayName,
-        source: "history",
-        historyDisplayName,
-        inspectedPaths: profile?.inspectedPaths ?? [...QQBOT_DISPLAY_SOURCE_PATHS],
-        matchedFields: profile?.matchedFields ?? [],
-      };
     }
   }
 
   return {
     displayName: stableId,
     source: "stable-id",
-    inspectedPaths: profile?.inspectedPaths ?? [...QQBOT_DISPLAY_SOURCE_PATHS],
-    matchedFields: profile?.matchedFields ?? [],
   };
 }
 
 function logQQBotSenderNameResolution(params: {
   logger: Logger;
-  inbound: ParsedQQInboundMessage;
+  inbound: QQInboundMessage;
   accountId: string;
   resolution: QQBotSenderNameResolution;
 }): void {
   const { logger, inbound, accountId, resolution } = params;
-  const matchedFields =
-    resolution.matchedFields.length > 0
-      ? resolution.matchedFields
-          .map((entry) => `${entry.path}=${JSON.stringify(entry.value)}`)
-          .join(" | ")
-      : "-";
   logger.debug?.(
     `[display-name] accountId=${accountId} type=${inbound.type} senderId=${inbound.senderId} ` +
-      `inspected=${resolution.inspectedPaths.join(",")} hits=${matchedFields} ` +
-      `alias=${resolution.matchedAliasKey ?? "-"} history=${resolution.historyDisplayName ?? "-"} ` +
+      `knownTarget=${resolution.knownTargetDisplayName ?? "-"} alias=${resolution.matchedAliasKey ?? "-"} ` +
       `final=${JSON.stringify(resolution.displayName)} source=${resolution.source}`
   );
 }
@@ -868,7 +741,7 @@ function sanitizeInboundLogText(text: string): string {
   return text.replace(/\r?\n/g, "\\n");
 }
 
-function parseC2CMessage(data: unknown, fallbackEventId?: string): ParsedQQInboundMessage | null {
+function parseC2CMessage(data: unknown, fallbackEventId?: string): QQInboundMessage | null {
   const payload = data as Record<string, unknown>;
   const { text, attachments } = parseTextWithAttachments(payload);
   const refIndices = parseQQBotRefIndices(payload);
@@ -883,7 +756,6 @@ function parseC2CMessage(data: unknown, fallbackEventId?: string): ParsedQQInbou
     type: "direct",
     senderId,
     c2cOpenid: senderId,
-    senderDisplayProfile: buildQQBotSenderDisplayProfile(payload),
     content: text,
     attachments: attachments.length > 0 ? attachments : undefined,
     messageId: id,
@@ -894,7 +766,7 @@ function parseC2CMessage(data: unknown, fallbackEventId?: string): ParsedQQInbou
   };
 }
 
-function parseGroupMessage(data: unknown, fallbackEventId?: string): ParsedQQInboundMessage | null {
+function parseGroupMessage(data: unknown, fallbackEventId?: string): QQInboundMessage | null {
   const payload = data as Record<string, unknown>;
   const { text, attachments } = parseTextWithAttachments(payload);
   const id = toString(payload.id);
@@ -908,7 +780,6 @@ function parseGroupMessage(data: unknown, fallbackEventId?: string): ParsedQQInb
   return {
     type: "group",
     senderId,
-    senderDisplayProfile: buildQQBotSenderDisplayProfile(payload),
     content: text,
     attachments: attachments.length > 0 ? attachments : undefined,
     messageId: id,
@@ -919,7 +790,7 @@ function parseGroupMessage(data: unknown, fallbackEventId?: string): ParsedQQInb
   };
 }
 
-function parseChannelMessage(data: unknown, fallbackEventId?: string): ParsedQQInboundMessage | null {
+function parseChannelMessage(data: unknown, fallbackEventId?: string): QQInboundMessage | null {
   const payload = data as Record<string, unknown>;
   const { text, attachments } = parseTextWithAttachments(payload);
   const id = toString(payload.id);
@@ -934,7 +805,6 @@ function parseChannelMessage(data: unknown, fallbackEventId?: string): ParsedQQI
   return {
     type: "channel",
     senderId,
-    senderDisplayProfile: buildQQBotSenderDisplayProfile(payload),
     content: text,
     attachments: attachments.length > 0 ? attachments : undefined,
     messageId: id,
@@ -946,7 +816,7 @@ function parseChannelMessage(data: unknown, fallbackEventId?: string): ParsedQQI
   };
 }
 
-function parseDirectMessage(data: unknown, fallbackEventId?: string): ParsedQQInboundMessage | null {
+function parseDirectMessage(data: unknown, fallbackEventId?: string): QQInboundMessage | null {
   const payload = data as Record<string, unknown>;
   const { text, attachments } = parseTextWithAttachments(payload);
   const id = toString(payload.id);
@@ -960,7 +830,6 @@ function parseDirectMessage(data: unknown, fallbackEventId?: string): ParsedQQIn
   return {
     type: "direct",
     senderId,
-    senderDisplayProfile: buildQQBotSenderDisplayProfile(payload),
     content: text,
     attachments: attachments.length > 0 ? attachments : undefined,
     messageId: id,
@@ -971,7 +840,7 @@ function parseDirectMessage(data: unknown, fallbackEventId?: string): ParsedQQIn
   };
 }
 
-function resolveInbound(eventType: string, data: unknown, fallbackEventId?: string): ParsedQQInboundMessage | null {
+function resolveInbound(eventType: string, data: unknown, fallbackEventId?: string): QQInboundMessage | null {
   switch (eventType) {
     case "C2C_MESSAGE_CREATE":
       return parseC2CMessage(data, fallbackEventId);
@@ -1060,7 +929,7 @@ export function resolveKnownQQBotTargetFromInbound(params: {
       accountId,
       kind: "user",
       target: `user:${inbound.c2cOpenid}`,
-      displayName: persistentDisplayName,
+      ...(persistentDisplayName ? { displayName: persistentDisplayName } : {}),
       sourceChatType: "direct",
       firstSeenAt: inbound.timestamp,
       lastSeenAt: inbound.timestamp,
@@ -1072,7 +941,7 @@ export function resolveKnownQQBotTargetFromInbound(params: {
       accountId,
       kind: "group",
       target: `group:${inbound.groupOpenid}`,
-      displayName: persistentDisplayName,
+      ...(persistentDisplayName ? { displayName: persistentDisplayName } : {}),
       sourceChatType: "group",
       firstSeenAt: inbound.timestamp,
       lastSeenAt: inbound.timestamp,
@@ -1084,7 +953,7 @@ export function resolveKnownQQBotTargetFromInbound(params: {
       accountId,
       kind: "channel",
       target: `channel:${inbound.channelId}`,
-      displayName: persistentDisplayName,
+      ...(persistentDisplayName ? { displayName: persistentDisplayName } : {}),
       sourceChatType: "channel",
       firstSeenAt: inbound.timestamp,
       lastSeenAt: inbound.timestamp,

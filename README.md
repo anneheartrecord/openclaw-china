@@ -456,7 +456,8 @@ openclaw config set channels.qqbot.c2cMarkdownDeliveryMode proactive-all
 - 已知目标默认保存到 `~/.openclaw/qqbot/data/known-targets.json`
 - 旧版 `~/.openclaw/data/qqbot/known-targets.json` 会在首次访问时自动迁移到新路径
 - 注册表会记录通过策略校验的 `user:` / `group:` / `channel:` 目标
-- 私聊入站显示名会优先取 `displayAliases`，再按 `remark_name > card > nickname > username > 历史 displayName > 平台 ID` 回退
+- 可以直接手工编辑其中的 `displayName`，把它当成 QQ 私聊用户的正式备注
+- 私聊入站显示名会优先取 `known-targets.json` 里已有的 `displayName`；如果没有，再回退到 `displayAliases`，最后才使用平台 ID
 - 推荐主动发送时使用 `user:` 与 `group:` 目标
 
 ```ts
@@ -481,7 +482,7 @@ await sendProactiveQQBotMessage({
 });
 ```
 
-如果 QQ 私聊里经常只能看到 `openid`，可以在配置里补一个本地 alias：
+如果 QQ 私聊里经常只能看到 `openid`，推荐先在 `~/.openclaw/qqbot/data/known-targets.json` 里手工补 `displayName` 作为正式备注；也可以继续在配置里补 alias：
 
 ```json
 {

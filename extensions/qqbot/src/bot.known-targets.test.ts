@@ -164,7 +164,6 @@ describe("QQBot inbound known-target recording", () => {
         accountId: "default",
         kind: "user",
         target: "user:u-123",
-        displayName: "Alice",
         sourceChatType: "direct",
         firstSeenAt: 1700000000000,
         lastSeenAt: 1700000000000,
@@ -172,9 +171,18 @@ describe("QQBot inbound known-target recording", () => {
     });
   });
 
-  it("prefers account displayAliases over payload names for direct messages", async () => {
+  it("prefers known-target displayName over displayAliases for direct messages", async () => {
     const logger = createLogger();
     const sessionRuntime = setupSessionRuntime();
+    proactiveMocks.getKnownQQBotTarget.mockReturnValue({
+      accountId: "default",
+      kind: "user",
+      target: "user:u-alias-1",
+      displayName: "Manual Note",
+      sourceChatType: "direct",
+      firstSeenAt: 100,
+      lastSeenAt: 200,
+    });
 
     await handleQQBotDispatch({
       eventType: "C2C_MESSAGE_CREATE",
@@ -184,9 +192,6 @@ describe("QQBot inbound known-target recording", () => {
         timestamp: 1700000000001,
         author: {
           user_openid: "u-alias-1",
-          remark_name: "Payload Remark",
-          nickname: "Payload Nick",
-          username: "Payload User",
         },
       },
       cfg: {
@@ -213,13 +218,13 @@ describe("QQBot inbound known-target recording", () => {
     expect(proactiveMocks.upsertKnownQQBotTarget).toHaveBeenCalledWith({
       target: expect.objectContaining({
         target: "user:u-alias-1",
-        displayName: "Account Alias",
+        displayName: "Manual Note",
       }),
     });
     expect(sessionRuntime.recordInboundSession).toHaveBeenCalledWith(
       expect.objectContaining({
         ctx: expect.objectContaining({
-          SenderName: "Account Alias",
+          SenderName: "Manual Note",
         }),
       })
     );
@@ -227,14 +232,14 @@ describe("QQBot inbound known-target recording", () => {
       expect.objectContaining({
         sessionKey: expect.any(String),
         ctx: expect.objectContaining({
-          SenderName: "Account Alias",
+          SenderName: "Manual Note",
         }),
         createIfMissing: true,
       })
     );
   });
 
-  it("prefers remark_name over card, nickname, and username", async () => {
+  it("uses account displayAliases when known-target displayName is missing", async () => {
     const logger = createLogger();
     const sessionRuntime = setupSessionRuntime();
 
@@ -246,13 +251,25 @@ describe("QQBot inbound known-target recording", () => {
         timestamp: 1700000000002,
         author: {
           user_openid: "u-priority-1",
-          remark_name: "Remark Name",
-          card: "Card Name",
-          nickname: "Nick Name",
-          username: "User Name",
         },
       },
-      cfg: baseCfg,
+      cfg: {
+        channels: {
+          qqbot: {
+            ...baseCfg.channels.qqbot,
+            displayAliases: {
+              "user:u-priority-1": "Global Alias",
+            },
+            accounts: {
+              default: {
+                displayAliases: {
+                  "user:u-priority-1": "Account Alias",
+                },
+              },
+            },
+          },
+        },
+      },
       accountId: "default",
       logger,
     });
@@ -260,19 +277,19 @@ describe("QQBot inbound known-target recording", () => {
     expect(proactiveMocks.upsertKnownQQBotTarget).toHaveBeenCalledWith({
       target: expect.objectContaining({
         target: "user:u-priority-1",
-        displayName: "Remark Name",
+        displayName: "Account Alias",
       }),
     });
     expect(sessionRuntime.recordInboundSession).toHaveBeenCalledWith(
       expect.objectContaining({
         ctx: expect.objectContaining({
-          SenderName: "Remark Name",
+          SenderName: "Account Alias",
         }),
       })
     );
   });
 
-  it("reuses historical displayName when the payload has no human-readable name", async () => {
+  it("uses known-target displayName as the formal manual note source", async () => {
     const logger = createLogger();
     const sessionRuntime = setupSessionRuntime();
     proactiveMocks.getKnownQQBotTarget.mockReturnValue({
@@ -344,7 +361,6 @@ describe("QQBot inbound known-target recording", () => {
         accountId: "default",
         kind: "group",
         target: "group:g-456",
-        displayName: "Team Owner",
         sourceChatType: "group",
         firstSeenAt: 1700000000100,
         lastSeenAt: 1700000000100,
@@ -378,7 +394,6 @@ describe("QQBot inbound known-target recording", () => {
         accountId: "default",
         kind: "channel",
         target: "channel:channel-789",
-        displayName: "Channel Owner",
         sourceChatType: "channel",
         firstSeenAt: 1700000000200,
         lastSeenAt: 1700000000200,

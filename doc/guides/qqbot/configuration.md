@@ -327,7 +327,8 @@ openclaw daemon start
 - 旧版 `~/.openclaw/data/qqbot/known-targets.json` 会在首次访问时自动迁移到新路径
 - 机器人见过、并且通过策略校验的用户或群，会自动记录到这里
 - 多账号场景会按 `accountId` 分开记录
-- 私聊用户的 `displayName` 会优先使用 `displayAliases`，否则按 `remark_name > card > nickname > username > 历史 displayName > openid/senderId` 生成
+- 你可以手工编辑其中的 `displayName`，把它当成 QQ 私聊用户的正式备注源
+- 私聊用户的 `displayName` 会优先使用 `known-targets.json` 里已有的 `displayName`；如果没有，再回退到 `displayAliases`，最后使用 `openid/senderId`
 - 目标格式如下：
   - 私聊用户：`user:<c2cOpenid>`
   - QQ 群：`group:<group_openid>`
