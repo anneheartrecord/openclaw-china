@@ -10,6 +10,7 @@ import {
   registerWecomWsEventContext,
   registerWecomWsMessageContext,
   registerWecomWsPendingAutoImagePaths,
+  sendWecomWsActiveMedia,
   sendWecomWsMessagePlaceholder,
   sendWecomWsActiveTemplateCard,
 } from "./ws-reply-context.js";
@@ -312,6 +313,44 @@ describe("wecom ws reply context", () => {
               },
             },
           ],
+        },
+      },
+    });
+  });
+
+  it("sends native media replies through the active message context queue", async () => {
+    const sent: unknown[] = [];
+    registerWecomWsMessageContext({
+      accountId: "acc-1",
+      reqId: "req-file",
+      to: "user:alice",
+      send: async (frame) => {
+        sent.push(frame);
+      },
+      streamId: "stream-file",
+    });
+
+    await expect(
+      sendWecomWsActiveMedia({
+        accountId: "acc-1",
+        to: "user:alice",
+        mediaType: "file",
+        mediaId: "media-file-1",
+      })
+    ).resolves.toBe(true);
+
+    await finishWecomWsMessageContext({
+      accountId: "acc-1",
+      reqId: "req-file",
+    });
+
+    expect(sent[0]).toMatchObject({
+      cmd: "aibot_respond_msg",
+      headers: { req_id: "req-file" },
+      body: {
+        msgtype: "file",
+        file: {
+          media_id: "media-file-1",
         },
       },
     });

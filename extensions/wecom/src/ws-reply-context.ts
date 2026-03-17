@@ -1,5 +1,11 @@
 import type { WecomWsFrame } from "./ws-protocol.js";
-import { buildWecomWsRespondMessageCommand, buildWecomWsUpdateTemplateCardCommand, createWecomWsStreamId } from "./ws-protocol.js";
+import {
+  buildWecomWsRespondMediaCommand,
+  buildWecomWsRespondMessageCommand,
+  buildWecomWsUpdateTemplateCardCommand,
+  createWecomWsStreamId,
+  type WecomWsNativeMediaType,
+} from "./ws-protocol.js";
 import { WECOM_REPLY_MSG_ITEM_LIMIT, type WecomReplyMsgItem } from "./ws-media.js";
 
 type WsSendFrame = (frame: WecomWsFrame) => Promise<void>;
@@ -446,6 +452,32 @@ export async function appendWecomWsActiveStreamReply(params: {
     accepted: true,
     appendedMsgItems: acceptedMsgItems.length,
   };
+}
+
+export async function sendWecomWsActiveMedia(params: {
+  accountId: string;
+  to: string;
+  mediaType: WecomWsNativeMediaType;
+  mediaId: string;
+  sessionKey?: string;
+  runId?: string;
+}): Promise<boolean> {
+  const context = findMessageContext(params);
+  const mediaId = params.mediaId.trim();
+  if (!context || !mediaId) return false;
+  const key = messageKey(context.accountId, context.reqId);
+  clearFinishTimer(key);
+  await enqueue(context, async () => {
+    await context.send(
+      buildWecomWsRespondMediaCommand({
+        reqId: context.reqId,
+        mediaType: params.mediaType,
+        mediaId,
+      })
+    );
+    context.updatedAt = now();
+  });
+  return true;
 }
 
 export function scheduleWecomWsMessageContextFinish(params: {

@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
+import { createHash } from "node:crypto";
 
 import WebSocket from "ws";
 
@@ -144,6 +145,83 @@ export class WSClient extends EventEmitter {
         ...body,
       },
     });
+  }
+
+  async replyMedia(
+    frame: { headers?: { req_id?: string } },
+    mediaType: "file" | "image" | "voice" | "video",
+    mediaId: string
+  ): Promise<WsFrame> {
+    return this.reply(frame, {
+      msgtype: mediaType,
+      [mediaType]: {
+        media_id: mediaId,
+      },
+    });
+  }
+
+  async sendMediaMessage(
+    chatid: string,
+    mediaType: "file" | "image" | "voice" | "video",
+    mediaId: string
+  ): Promise<WsFrame> {
+    return this.sendMessage(chatid, {
+      msgtype: mediaType,
+      [mediaType]: {
+        media_id: mediaId,
+      },
+    });
+  }
+
+  async uploadMedia(
+    fileBuffer: Buffer,
+    options: { type: "file" | "image" | "voice" | "video"; filename: string }
+  ): Promise<{ type: string; media_id: string; created_at: number }> {
+    const md5 = createHash("md5").update(fileBuffer).digest("hex");
+    const initFrame = await this.sendFrame({
+      cmd: "aibot_upload_media_init",
+      headers: {
+        req_id: crypto.randomUUID(),
+      },
+      body: {
+        type: options.type,
+        filename: options.filename,
+        total_size: fileBuffer.length,
+        total_chunks: 1,
+        md5,
+      },
+    });
+    const uploadId =
+      String((initFrame.body as { upload_id?: string } | undefined)?.upload_id ?? "").trim() ||
+      `upload-${crypto.randomUUID()}`;
+    await this.sendFrame({
+      cmd: "aibot_upload_media_chunk",
+      headers: {
+        req_id: crypto.randomUUID(),
+      },
+      body: {
+        upload_id: uploadId,
+        chunk_index: 0,
+        total_chunks: 1,
+        data: fileBuffer.toString("base64"),
+      },
+    });
+    const finishFrame = await this.sendFrame({
+      cmd: "aibot_upload_media_finish",
+      headers: {
+        req_id: crypto.randomUUID(),
+      },
+      body: {
+        upload_id: uploadId,
+        md5,
+      },
+    });
+    const body = (finishFrame.body as { media_id?: string; created_at?: number } | undefined) ?? {};
+    return {
+      type: options.type,
+      media_id: String(body.media_id ?? "").trim() || `media-${crypto.randomUUID()}`,
+      created_at: typeof body.created_at === "number" ? body.created_at : Date.now(),
+    };
   }
 
   private async sendFrame(frame: WsFrame): Promise<WsFrame> {

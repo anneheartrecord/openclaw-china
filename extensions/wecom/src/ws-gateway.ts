@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { WSClient, type SendMsgBody, type WsFrame as SdkWsFrame } from "@wecom/aibot-node-sdk";
 
 import type { PluginConfig } from "./config.js";
@@ -15,7 +17,7 @@ import {
   scheduleWecomWsMessageContextFinish,
   sendWecomWsMessagePlaceholder,
 } from "./ws-reply-context.js";
-import { normalizeWecomWsCallback, type WecomWsFrame } from "./ws-protocol.js";
+import { normalizeWecomWsCallback, type WecomWsFrame, type WecomWsNativeMediaType } from "./ws-protocol.js";
 
 type WecomRuntimeEnv = {
   log?: (message: string) => void;
@@ -282,6 +284,56 @@ export async function sendWecomWsProactiveTemplateCard(params: {
       template_card: params.templateCard as SendMsgBody extends { template_card: infer T } ? T : never,
     },
   });
+}
+
+export async function uploadWecomWsLocalMedia(params: {
+  accountId: string;
+  filePath: string;
+  mediaType: WecomWsNativeMediaType;
+  filename?: string;
+}): Promise<{ mediaId: string; createdAt?: number }> {
+  const client = requireActiveClient(params.accountId);
+  const sourcePath = params.filePath.trim();
+  if (!sourcePath) {
+    throw new Error("WeCom ws media upload requires a local file path");
+  }
+  const fileBuffer = await import("node:fs/promises").then((fs) => fs.readFile(sourcePath));
+  const filename = params.filename?.trim() || path.basename(sourcePath);
+  const result = await client.uploadMedia(fileBuffer, {
+    type: params.mediaType,
+    filename,
+  });
+  const mediaId = String(result.media_id ?? "").trim();
+  if (!mediaId) {
+    throw new Error(`WeCom ws upload returned empty media_id for ${filename}`);
+  }
+  return {
+    mediaId,
+    createdAt: typeof result.created_at === "number" ? result.created_at : undefined,
+  };
+}
+
+export async function sendWecomWsProactiveMedia(params: {
+  accountId: string;
+  to: string;
+  mediaType: WecomWsNativeMediaType;
+  mediaId: string;
+}): Promise<void> {
+  const activated = getActivatedTarget(params.accountId, params.to);
+  if (!activated) {
+    throw new Error(
+      `No activated WeCom ws conversation found for ${params.to}. The user or group must have sent at least one message in this runtime before proactive send is allowed.`
+    );
+  }
+  const mediaId = params.mediaId.trim();
+  if (!mediaId) {
+    throw new Error("WeCom ws proactive media send requires a media_id");
+  }
+  const client = requireActiveClient(params.accountId);
+  const response = await client.sendMediaMessage(activated.chatId, params.mediaType, mediaId);
+  if (typeof response.errcode === "number" && response.errcode !== 0) {
+    throw new Error(`WeCom proactive media send failed: ${response.errcode} ${response.errmsg ?? ""}`.trim());
+  }
 }
 
 export async function startWecomWsGateway(opts: StartWecomWsGatewayOptions): Promise<void> {

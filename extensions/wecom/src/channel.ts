@@ -31,15 +31,17 @@ import {
   appendWecomWsActiveStreamChunk,
   appendWecomWsActiveStreamReply,
   consumeWecomWsPendingAutoImagePaths,
+  sendWecomWsActiveMedia,
   sendWecomWsActiveTemplateCard,
 } from "./ws-reply-context.js";
 import {
   sendWecomWsProactiveMarkdown,
+  sendWecomWsProactiveMedia,
   sendWecomWsProactiveTemplateCard,
   startWecomWsGateway,
   stopWecomWsGatewayForAccount,
+  uploadWecomWsLocalMedia,
 } from "./ws-gateway.js";
-import { buildWecomNativeReplyImageItem } from "./ws-media.js";
 
 type ParsedDirectTarget = {
   accountId?: string;
@@ -594,37 +596,70 @@ export const wecomPlugin = {
             runId: streamContext.runId,
           });
         }
-        if (account.mode === "ws" && account.wsImageReplyMode === "native" && !isHttpUrl(params.mediaUrl)) {
+        const localNativeMediaType = detectOutboundMediaType(params.mediaUrl, params.mimeType);
+        const shouldUseNativeWsMedia =
+          account.mode === "ws" &&
+          !isHttpUrl(params.mediaUrl) &&
+          (localNativeMediaType === "file" ||
+            (localNativeMediaType === "image" && account.wsImageReplyMode === "native"));
+        if (shouldUseNativeWsMedia) {
           const localPath = normalizeLocalPath(params.mediaUrl);
           await ensureReadableFile(localPath);
-          const nativeMsgItem = await buildWecomNativeReplyImageItem({ source: localPath });
-          if (nativeMsgItem) {
-            const nativeAccepted = await appendActiveReply({
-              account,
-              to: replyTarget,
-              msgItems: [nativeMsgItem],
-              sessionKey: streamContext.sessionKey,
-              runId: streamContext.runId,
-            });
-            if (nativeAccepted.accepted && nativeAccepted.appendedMsgItems > 0) {
-              const caption = params.text?.trim();
-              if (caption) {
-                await appendActiveChunk({
-                  account,
-                  to: replyTarget,
-                  chunk: caption,
-                  sessionKey: streamContext.sessionKey,
-                  runId: streamContext.runId,
-                });
-              }
-              console.log(`[wecom] sendMedia success (native ws image): to=${replyTarget}`);
-              return {
-                channel: "wecom",
-                ok: true,
-                messageId: `stream:${Date.now()}`,
-              };
-            }
+          const uploaded = await uploadWecomWsLocalMedia({
+            accountId: account.accountId,
+            filePath: localPath,
+            filename: path.basename(localPath),
+            mediaType: localNativeMediaType,
+          });
+          const caption = params.text?.trim();
+          const captionAccepted = caption
+            ? await appendActiveChunk({
+                account,
+                to: replyTarget,
+                chunk: caption,
+                sessionKey: streamContext.sessionKey,
+                runId: streamContext.runId,
+              })
+            : false;
+          const activeMediaAccepted = await sendWecomWsActiveMedia({
+            accountId: account.accountId,
+            to: replyTarget,
+            mediaType: localNativeMediaType,
+            mediaId: uploaded.mediaId,
+            sessionKey: streamContext.sessionKey,
+            runId: streamContext.runId,
+          });
+          if (activeMediaAccepted) {
+            console.log(
+              `[wecom] sendMedia success (native ws media reply): type=${localNativeMediaType}, to=${replyTarget}`
+            );
+            return {
+              channel: "wecom",
+              ok: true,
+              messageId: `native-reply:${Date.now()}`,
+            };
           }
+          await sendWecomWsProactiveMedia({
+            accountId: account.accountId,
+            to: replyTarget,
+            mediaType: localNativeMediaType,
+            mediaId: uploaded.mediaId,
+          });
+          if (caption && !captionAccepted) {
+            await sendWecomWsProactiveMarkdown({
+              accountId: account.accountId,
+              to: replyTarget,
+              content: caption,
+            });
+          }
+          console.log(
+            `[wecom] sendMedia success (native ws media proactive): type=${localNativeMediaType}, to=${replyTarget}`
+          );
+          return {
+            channel: "wecom",
+            ok: true,
+            messageId: `native-proactive:${Date.now()}`,
+          };
         }
 
         let publicMediaUrl = params.mediaUrl.trim();
