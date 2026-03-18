@@ -20,6 +20,16 @@ type PendingResolver = {
   reject: (err: Error) => void;
 };
 
+let mockDisconnectErrorMessage: string | null = null;
+
+export function setMockDisconnectErrorMessage(message: string | null): void {
+  mockDisconnectErrorMessage = message?.trim() ? message : null;
+}
+
+export function resetMockSdkBehavior(): void {
+  mockDisconnectErrorMessage = null;
+}
+
 export class WSClient extends EventEmitter {
   private readonly botId: string;
   private readonly secret: string;
@@ -112,6 +122,11 @@ export class WSClient extends EventEmitter {
 
   disconnect(): void {
     this.clearHeartbeat();
+    if (mockDisconnectErrorMessage) {
+      queueMicrotask(() => {
+        this.emit("error", new Error(mockDisconnectErrorMessage ?? "mock disconnect error"));
+      });
+    }
     this.socket?.close();
     this.socket = null;
   }
