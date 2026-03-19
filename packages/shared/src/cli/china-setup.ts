@@ -51,7 +51,7 @@ type ConfigRoot = {
   [key: string]: unknown;
 };
 
-export type ChannelId = "dingtalk" | "feishu-china" | "wecom" | "wecom-app" | "wecom-kf" | "qqbot";
+export type ChannelId = "dingtalk" | "feishu-china" | "wecom" | "wecom-app" | "wecom-kf" | "qqbot" | "wechat-mp";
 
 export type RegisterChinaSetupCliOptions = {
   channels?: readonly ChannelId[];
@@ -78,6 +78,7 @@ const CHANNEL_ORDER: readonly ChannelId[] = [
   "wecom",
   "wecom-app",
   "wecom-kf",
+  "wechat-mp",
   "feishu-china",
 ];
 const CHANNEL_DISPLAY_LABELS: Record<ChannelId, string> = {
@@ -86,6 +87,7 @@ const CHANNEL_DISPLAY_LABELS: Record<ChannelId, string> = {
   wecom: "WeCom（企业微信-智能机器人）",
   "wecom-app": "WeCom App（自建应用-可接入微信）",
   "wecom-kf": "WeCom KF（微信客服）",
+  "wechat-mp": "WeChat MP（微信公众号）",
   qqbot: "QQBot（QQ 机器人）",
 };
 const CHANNEL_GUIDE_LINKS: Record<ChannelId, string> = {
@@ -94,6 +96,7 @@ const CHANNEL_GUIDE_LINKS: Record<ChannelId, string> = {
   wecom: `${GUIDES_BASE}/wecom/configuration.md`,
   "wecom-app": `${GUIDES_BASE}/wecom-app/configuration.md`,
   "wecom-kf": "https://github.com/BytePioneer-AI/openclaw-china/blob/main/extensions/wecom-kf/README.md",
+  "wechat-mp": `${GUIDES_BASE}/wechat-mp/configuration.md`,
   qqbot: `${GUIDES_BASE}/qqbot/configuration.md`,
 };
 const CHINA_CLI_STATE_KEY = Symbol.for("@openclaw-china/china-cli-state");
