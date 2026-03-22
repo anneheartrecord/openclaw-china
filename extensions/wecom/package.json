@@ -101,6 +101,7 @@
   "dependencies": {
     "@openclaw-china/shared": "workspace:*",
     "@wecom/aibot-node-sdk": "^1.0.2",
+    "https-proxy-agent": "^7.0.6",
     "ws": "^8.18.0"
   },
   "devDependencies": {

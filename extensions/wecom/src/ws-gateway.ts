@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { WSClient, type SendMsgBody, type WsFrame as SdkWsFrame } from "@wecom/aibot-node-sdk";
+import { HttpsProxyAgent } from "https-proxy-agent";
 
 import type { PluginConfig } from "./config.js";
 import { createLogger, type Logger } from "@openclaw-china/shared";
@@ -394,6 +395,14 @@ export async function startWecomWsGateway(opts: StartWecomWsGatewayOptions): Pro
     let shuttingDown = false;
     let shutdownTimer: NodeJS.Timeout | null = null;
 
+    // 构造 WebSocket 代理 agent（容器环境需走 HTTPS_PROXY 连企微）
+    const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || "";
+    const wsOptions: Record<string, unknown> = {};
+    if (proxyUrl) {
+      wsOptions.agent = new HttpsProxyAgent(proxyUrl);
+      logger.info(`Using proxy for WebSocket: ${proxyUrl}`);
+    }
+
     const client = new WSClient({
       botId: account.botId ?? "",
       secret: account.secret ?? "",
@@ -402,6 +411,7 @@ export async function startWecomWsGateway(opts: StartWecomWsGatewayOptions): Pro
       reconnectInterval: account.reconnectInitialDelayMs,
       maxReconnectAttempts: -1,
       logger: createSdkLogger(logger, { isShuttingDown: () => shuttingDown }),
+      wsOptions,
     });
     conn.client = client;
 
