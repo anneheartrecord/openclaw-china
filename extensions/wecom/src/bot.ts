@@ -270,11 +270,22 @@ export async function normalizeChunkForWecomWsStream(params: {
   };
 }
 
+/**
+ * Strip leading @mentions from message content.
+ * WebSocket mode preserves @botname in text.content, while callback mode
+ * strips it server-side. This normalizes both modes to the same output.
+ * Only strips @mentions at the beginning of the message to avoid removing
+ * intentional @mentions in the body (e.g. "请@张三看一下").
+ */
+function stripMentions(text: string): string {
+  return text.replace(/^(?:@[^\s]+\s*)+/, "").trim();
+}
+
 export function extractWecomContent(msg: WecomInboundMessage): string {
   const msgtype = String(msg.msgtype ?? "").toLowerCase();
   if (msgtype === "text") {
     const content = (msg as { text?: { content?: string } }).text?.content;
-    return typeof content === "string" ? content : "";
+    return typeof content === "string" ? stripMentions(content) : "";
   }
   if (msgtype === "voice") {
     const content = (msg as { voice?: { content?: string } }).voice?.content;
@@ -288,7 +299,7 @@ export function extractWecomContent(msg: WecomInboundMessage): string {
           if (!item || typeof item !== "object") return "";
           const typed = item as { msgtype?: string; text?: { content?: string }; image?: { url?: string } };
           const t = String(typed.msgtype ?? "").toLowerCase();
-          if (t === "text") return String(typed.text?.content ?? "");
+          if (t === "text") return stripMentions(String(typed.text?.content ?? ""));
           if (t === "image") return `[image] ${String(typed.image?.url ?? "").trim()}`.trim();
           return t ? `[${t}]` : "";
         })
